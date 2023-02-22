@@ -154,7 +154,7 @@ from . import ForeignDataWrapper, TableDefinition, ColumnDefinition
 from .utils import log_to_postgres, ERROR, WARNING, DEBUG
 from sqlalchemy import create_engine
 from sqlalchemy.engine.url import make_url, URL
-from sqlalchemy.sql import select, operators as sqlops, and_
+from sqlalchemy.sql import select, operators as sqlops, func, and_
 from sqlalchemy.sql.expression import nullsfirst, nullslast
 
 # Handle the sqlalchemy 0.8 / 0.9 changes
@@ -207,6 +207,14 @@ def _parse_url_from_options(fdw_options):
             setattr(url, param, fdw_options[param])
     return url
 
+_PG_AGG_FUNC_MAPPING = {
+    "avg": func.avg,
+    "min": func.min,
+    "max": func.max,
+    "sum": func.sum,
+    "count": func.count,
+    "count.*": func.count
+}
 
 
 OPERATORS = {
@@ -321,13 +329,42 @@ class SqlAlchemyFdw(ForeignDataWrapper):
             return []
         return sortkeys
 
-    def explain(self, quals, columns, sortkeys=None, verbose=False):
-        sortkeys = sortkeys or []
-        statement = self._build_statement(quals, columns, sortkeys)
-        return [str(statement)]
+    def can_pushdown_upperrel(self):
+        return {
+            "groupby_supported": True,
+            "agg_functions": list(_PG_AGG_FUNC_MAPPING),
+            "operators_supported": [op for op in OPERATORS if isinstance(op, str)],
+        }
 
-    def _build_statement(self, quals, columns, sortkeys):
-        statement = select([self.table])
+    def explain(self, quals, columns, sortkeys=None, aggs=None, group_clauses=None, verbose=False):
+        sortkeys = sortkeys or []
+        statement = self._build_statement(quals, columns, sortkeys, aggs=aggs, group_clauses=group_clauses)
+
+        # The literal_binds option below ensures that qualifiers are displayed as raw strings
+        # instead of being masked by placeholder bound parameters, thus providing more transparency
+        # during use (and testing).
+        return ["\n" + str(statement.compile(dialect=self.engine.dialect, compile_kwargs={"literal_binds": True})) + "\n"]
+
+    def _build_statement(self, quals, columns, sortkeys, aggs=None, group_clauses=None):
+        is_aggregation = aggs or group_clauses
+
+        if not is_aggregation:
+            statement = select([self.table])
+        else:
+            target_list = []
+
+            if group_clauses is not None:
+                target_list = [self.table.c[col] for col in group_clauses]
+
+            if aggs is not None:
+                for agg_name, agg_props in aggs.items():
+                    agg_func = _PG_AGG_FUNC_MAPPING[agg_props["function"]]
+                    agg_target = agg_func() if agg_props["column"] == "*" else agg_func(self.table.c[agg_props["column"]])
+
+                    target_list.append(agg_target.label(agg_name))
+
+            statement = select(*target_list).select_from(self.table)
+
         clauses = []
         for qual in quals:
             operator = OPERATORS.get(qual.operator, None)
@@ -339,12 +376,16 @@ class SqlAlchemyFdw(ForeignDataWrapper):
                                 WARNING)
         if clauses:
             statement = statement.where(and_(*clauses))
-        if columns:
-            columns = [self.table.c[col] for col in columns]
-        else:
-            columns = self.table.c
-        statement = statement.with_only_columns(columns)
-        orders = []
+
+        if not is_aggregation:
+            if columns:
+                columns = [self.table.c[col] for col in columns]
+            else:
+                columns = self.table.c
+            statement = statement.with_only_columns(columns)
+            orders = []
+        elif group_clauses is not None:
+            statement = statement.group_by(*[self.table.c[col] for col in group_clauses])
         for sortkey in sortkeys:
             column = self.table.c[sortkey.attname]
             if sortkey.is_reversed:
@@ -357,13 +398,13 @@ class SqlAlchemyFdw(ForeignDataWrapper):
             statement = statement.order_by(column)
         return statement
 
-
-    def execute(self, quals, columns, sortkeys=None):
+    def execute(self, quals, columns, sortkeys=None, aggs=None, group_clauses=None):
         """
         The quals are turned into an and'ed where clause.
         """
         sortkeys = sortkeys or []
-        statement = self._build_statement(quals, columns, sortkeys)
+        is_aggregation = aggs or group_clauses
+        statement = self._build_statement(quals, columns, sortkeys, aggs=aggs, group_clauses=group_clauses)
         log_to_postgres(str(statement), DEBUG)
         rs = (self.connection
               .execution_options(stream_results=True)

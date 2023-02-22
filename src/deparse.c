@@ -115,11 +115,11 @@ multicorn_is_builtin(Oid oid)
  */
 static bool
 multicorn_foreign_expr_walker(Node *node,
-						      foreign_glob_cxt *glob_cxt,
-						      foreign_loc_cxt *outer_cxt)
+							  foreign_glob_cxt *glob_cxt,
+							  foreign_loc_cxt *outer_cxt)
 {
 	bool		check_type = true;
-    MulticornPlanState *fpinfo;
+	MulticornPlanState *fpinfo;
 	foreign_loc_cxt inner_cxt;
 	Oid			collation = InvalidOid;
 	FDWCollateState state = FDW_COLLATE_NONE;
@@ -129,7 +129,7 @@ multicorn_foreign_expr_walker(Node *node,
 	if (node == NULL)
 		return true;
 
-    /* Needed to asses per-instance FDW shipability properties */
+	/* Needed to asses per-instance FDW shipability properties */
 	fpinfo = (MulticornPlanState *) (glob_cxt->foreignrel->fdw_private);
 
 	/* Set up inner_cxt for possible recursion to child nodes */
@@ -195,7 +195,7 @@ multicorn_foreign_expr_walker(Node *node,
 				Aggref	   *agg = (Aggref *) node;
 				ListCell   *lc;
 				char	   *opername = NULL;
-                StringInfo opername_composite = makeStringInfo();
+				StringInfo opername_composite = makeStringInfo();
 				Oid			schema;
 
 				/* get function name and schema */
@@ -212,19 +212,19 @@ multicorn_foreign_expr_walker(Node *node,
 				if (schema != PG_CATALOG_NAMESPACE)
 					return false;
 
-                /* Make sure the specific function at hand is shippable
-                 * NB: here we deviate from standard FDW code, since the allowed
-                 * function list is fetched from the Python FDW instance
-                 */
-                if (agg->aggstar)
-                {
-                    initStringInfo(opername_composite);
-                    appendStringInfoString(opername_composite, opername);
-                    appendStringInfoString(opername_composite, ".*");
+				/* Make sure the specific function at hand is shippable
+				 * NB: here we deviate from standard FDW code, since the allowed
+				 * function list is fetched from the Python FDW instance
+				 */
+				if (agg->aggstar)
+				{
+					initStringInfo(opername_composite);
+					appendStringInfoString(opername_composite, opername);
+					appendStringInfoString(opername_composite, ".*");
 
-                    if (!list_member(fpinfo->agg_functions, makeString(opername_composite->data)))
-					    return false;
-                }
+					if (!list_member(fpinfo->agg_functions, makeString(opername_composite->data)))
+						return false;
+				}
 				else if (!list_member(fpinfo->agg_functions, makeString(opername)))
 					return false;
 
@@ -236,12 +236,12 @@ multicorn_foreign_expr_walker(Node *node,
 				if (agg->aggsplit != AGGSPLIT_SIMPLE)
 					return false;
 
-                /*
-                 * For now we don't push down DISTINCT aggregations.
-                 * TODO: Enable this
-                 */
-                if (agg->aggdistinct)
-                    return false;
+				/*
+				 * For now we don't push down DISTINCT aggregations.
+				 * TODO: Enable this
+				 */
+				if (agg->aggdistinct)
+					return false;
 
 				/*
 				 * Recurse to input args. aggdirectargs, aggorder and
@@ -366,8 +366,8 @@ multicorn_foreign_expr_walker(Node *node,
  */
 bool
 multicorn_is_foreign_expr(PlannerInfo *root,
-					      RelOptInfo *baserel,
-					      Expr *expr)
+						  RelOptInfo *baserel,
+						  Expr *expr)
 {
 	foreign_glob_cxt glob_cxt;
 	foreign_loc_cxt loc_cxt;
@@ -504,53 +504,53 @@ multicorn_build_tlist_to_deparse(RelOptInfo *foreignrel)
 void
 multicorn_extract_upper_rel_info(PlannerInfo *root, List *tlist, MulticornPlanState *fpinfo)
 {
-    ListCell *lc;
-    TargetEntry *tle;
-    Var *var;
-    Value *colname, *function;
-    Aggref *aggref;
-    StringInfo agg_key = makeStringInfo();
+	ListCell *lc;
+	TargetEntry *tle;
+	Var *var;
+	Value *colname, *function;
+	Aggref *aggref;
+	StringInfo agg_key = makeStringInfo();
 
-    foreach(lc, tlist)
-    {
-        tle = lfirst_node(TargetEntry, lc);
+	foreach(lc, tlist)
+	{
+		tle = lfirst_node(TargetEntry, lc);
 
-        if (tle->ressortgroupref)
-        {
-            /* GROUP BY target */
-            var = (Var *) tle->expr;
-            colname = colnameFromVar(var, root);
+		if (tle->ressortgroupref)
+		{
+			/* GROUP BY target */
+			var = (Var *) tle->expr;
+			colname = colnameFromVar(var, root);
 
-            fpinfo->group_clauses = lappend(fpinfo->group_clauses, colname);
-            fpinfo->upper_rel_targets = lappend(fpinfo->upper_rel_targets, colname);
-        }
-        else
-        {
-            /* Aggregation target */
-            aggref = (Aggref *) tle->expr;
-            function = multicorn_deparse_function_name(aggref->aggfnoid);
+			fpinfo->group_clauses = lappend(fpinfo->group_clauses, colname);
+			fpinfo->upper_rel_targets = lappend(fpinfo->upper_rel_targets, colname);
+		}
+		else
+		{
+			/* Aggregation target */
+			aggref = (Aggref *) tle->expr;
+			function = multicorn_deparse_function_name(aggref->aggfnoid);
 
-            if (aggref->aggstar)
-            {
-                colname = makeString("*");
-            }
-            else
-            {
-                var = linitial(pull_var_clause((Node *) aggref,
-                                            PVC_RECURSE_AGGREGATES |
-                                            PVC_RECURSE_PLACEHOLDERS));
-                colname = colnameFromVar(var, root);
-            }
+			if (aggref->aggstar)
+			{
+				colname = makeString("*");
+			}
+			else
+			{
+				var = linitial(pull_var_clause((Node *) aggref,
+											PVC_RECURSE_AGGREGATES |
+											PVC_RECURSE_PLACEHOLDERS));
+				colname = colnameFromVar(var, root);
+			}
 
-            initStringInfo(agg_key);
-            appendStringInfoString(agg_key, strVal(function));
-            appendStringInfoString(agg_key, ".");
-            appendStringInfoString(agg_key, strVal(colname));
+			initStringInfo(agg_key);
+			appendStringInfoString(agg_key, strVal(function));
+			appendStringInfoString(agg_key, ".");
+			appendStringInfoString(agg_key, strVal(colname));
 
-            fpinfo->aggs = lappend(fpinfo->aggs, list_make3(makeString(agg_key->data), function, colname));
-            fpinfo->upper_rel_targets = lappend(fpinfo->upper_rel_targets, makeString(agg_key->data));
-        }
-    }
+			fpinfo->aggs = lappend(fpinfo->aggs, list_make3(makeString(agg_key->data), function, colname));
+			fpinfo->upper_rel_targets = lappend(fpinfo->upper_rel_targets, makeString(agg_key->data));
+		}
+	}
 }
 
 /*
@@ -572,5 +572,5 @@ multicorn_deparse_function_name(Oid funcid)
 	proname = NameStr(procform->proname);
 
 	ReleaseSysCache(proctup);
-    return makeString(proname);
+	return makeString(proname);
 }

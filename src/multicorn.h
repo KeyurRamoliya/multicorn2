@@ -100,20 +100,20 @@ typedef struct MulticornPlanState
 	 */
 	int width;
 
-    /* Details about upperrel pushdown fetched from the Python FDW instance */
-    bool groupby_supported;
-    List *agg_functions;
-    List *operators_supported;
+	/* Details about upperrel pushdown fetched from the Python FDW instance */
+	bool groupby_supported;
+	List *agg_functions;
+	List *operators_supported;
 
-    /*
-     * Aggregation and grouping data to be passed to the execution phase.
-     * See MulticornExecState for more details.
-     */
-    List *upper_rel_targets;
+	/*
+	 * Aggregation and grouping data to be passed to the execution phase.
+	 * See MulticornExecState for more details.
+	 */
+	List *upper_rel_targets;
 	List *aggs;
 	List *group_clauses;
 
-    /*
+	/*
 	 * True means that the relation can be pushed down. Always true for simple
 	 * foreign scan.
 	 */
@@ -122,7 +122,7 @@ typedef struct MulticornPlanState
 	/* qual clauses */
 	List	   *baserestrictinfo;
 
-    /* Actual remote restriction clauses for scan (sans RestrictInfos) */
+	/* Actual remote restriction clauses for scan (sans RestrictInfos) */
 	List	   *final_remote_exprs;
 
 	/* Estimated size and cost for a scan or join. */
@@ -169,34 +169,34 @@ typedef struct MulticornExecState
 	Datum	   *values;
 	bool	   *nulls;
 	ConversionInfo **cinfos;
-    /*
-     * In case of aggregations the upper rel target list does not correspond to
-     * the base table target list, so separate conversion information must be
-     * provided when converting the quals in the execute method.
-     */
-    ConversionInfo **qual_cinfos;
-    /*
-     * List containing targets to be returned from Python in case of aggregations.
-     * List elements are aggregation keys or group_clauses elements.
-     */
-    List *upper_rel_targets;
-    /*
-     * In case the query contains aggregations, the lists below details which
-     * functions correspond to which columns.
-     * List elements are themselves Lists of String nodes, denoting agg key,
-     * operation and column names, respectively. The agg key corresponds to the
-     * upper_rel_targets list entries.
-     */
+	/*
+	 * In case of aggregations the upper rel target list does not correspond to
+	 * the base table target list, so separate conversion information must be
+	 * provided when converting the quals in the execute method.
+	 */
+	ConversionInfo **qual_cinfos;
+	/*
+	 * List containing targets to be returned from Python in case of aggregations.
+	 * List elements are aggregation keys or group_clauses elements.
+	 */
+	List *upper_rel_targets;
+	/*
+	 * In case the query contains aggregations, the lists below details which
+	 * functions correspond to which columns.
+	 * List elements are themselves Lists of String nodes, denoting agg key,
+	 * operation and column names, respectively. The agg key corresponds to the
+	 * upper_rel_targets list entries.
+	 */
 	List *aggs;
-    /*
-     * List containing GROUP BY information.
-     * List elements are column names for grouping.
-     */
+	/*
+	 * List containing GROUP BY information.
+	 * List elements are column names for grouping.
+	 */
 	List *group_clauses;
-    /*
-     * Qual conditions parsed in the MulticornGetForeignRelSize
-     */
-    List *baserestrictinfo;
+	/*
+	 * Qual conditions parsed in the MulticornGetForeignRelSize
+	 */
+	List *baserestrictinfo;
 
 	/* Common buffer to avoid repeated allocations */
 	StringInfo	buffer;
@@ -204,7 +204,7 @@ typedef struct MulticornExecState
 	char	   *rowidAttrName;
 	List	   *pathkeys; /* list of MulticornDeparsedSortGroup) */
 
-    Relation	rel;			/* relcache entry for the foreign table. NULL
+	Relation	rel;			/* relcache entry for the foreign table. NULL
 								 * for a foreign join scan. */
 	TupleDesc	tupdesc;		/* tuple descriptor of scan */
 }	MulticornExecState;
@@ -262,8 +262,8 @@ typedef struct MulticornDeparsedSortGroup
 
 /* deparse.c */
 extern bool multicorn_is_foreign_expr(PlannerInfo *root,
-								      RelOptInfo *baserel,
-								      Expr *expr);
+									  RelOptInfo *baserel,
+									  Expr *expr);
 extern bool multicorn_is_foreign_param(PlannerInfo *root,
 									   RelOptInfo *baserel,
 									   Expr *expr);

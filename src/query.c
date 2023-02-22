@@ -111,17 +111,17 @@ initConversioninfo(ConversionInfo ** cinfos, AttInMetadata *attinmeta, List *upp
 		Oid			outfuncoid;
 		bool		typIsVarlena;
 
-        char *attrname = NameStr(attr->attname);
+		char *attrname = NameStr(attr->attname);
 
-        if (upper_rel_targets)
-        {
-            /*
-             * For aggregations/groupings the targets lack attname, so we instead
-             * refer to the targets through references generated in
-             * multicorn_extract_upper_rel_info().
-             */
-            attrname = strVal(list_nth(upper_rel_targets, i));
-        }
+		if (upper_rel_targets)
+		{
+			/*
+			 * For aggregations/groupings the targets lack attname, so we instead
+			 * refer to the targets through references generated in
+			 * multicorn_extract_upper_rel_info().
+			 */
+			attrname = strVal(list_nth(upper_rel_targets, i));
+		}
 
 		if (!attr->attisdropped)
 		{

@@ -104,8 +104,8 @@ static void multicorn_subxact_callback(SubXactEvent event, SubTransactionId mySu
 						   SubTransactionId parentSubid, void *arg);
 
 static void multicornGetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
-						      RelOptInfo *input_rel, RelOptInfo *output_rel, void *extra
-        );
+							  RelOptInfo *input_rel, RelOptInfo *output_rel, void *extra
+		);
 
 static List *multicornImportForeignSchema(ImportForeignSchemaStmt * stmt,
 							 Oid serverOid);
@@ -114,7 +114,7 @@ static void multicorn_xact_callback(XactEvent event, void *arg);
 
 /* Functions relating to aggregation/grouping pushdown */
 static bool multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
-                                          Node *havingQual);
+										  Node *havingQual);
 static void multicorn_add_foreign_grouping_paths(PlannerInfo *root,
 											  RelOptInfo *input_rel,
 											  RelOptInfo *grouped_rel,
@@ -200,7 +200,7 @@ multicorn_handler(PG_FUNCTION_ARGS)
 
 	fdw_routine->ImportForeignSchema = multicornImportForeignSchema;
 
-    /* Support functions for upper relation push-down */
+	/* Support functions for upper relation push-down */
 	fdw_routine->GetForeignUpperPaths = multicornGetForeignUpperPaths;
 
 	PG_RETURN_POINTER(fdw_routine);
@@ -267,12 +267,12 @@ multicornGetForeignRelSize(PlannerInfo *root,
 
 	baserel->fdw_private = planstate;
 
-    /* Base foreign tables need to be push down always */
+	/* Base foreign tables need to be push down always */
 	planstate->pushdown_safe = true;
 
-    /* Initialize upperrel pushdown info */
-    planstate->groupby_supported = false;
-    planstate->agg_functions = NULL;
+	/* Initialize upperrel pushdown info */
+	planstate->groupby_supported = false;
+	planstate->agg_functions = NULL;
 
 	planstate->fdw_instance = getInstance(foreigntableid);
 	planstate->foreigntableid = foreigntableid;
@@ -308,20 +308,20 @@ multicornGetForeignRelSize(PlannerInfo *root,
 	else
 	{
 		/*
-         * Pull "var" clauses to build an appropriate target list
-         *
-         * baserel->reltarget->exprs can be used to determine which columns need
-         * to be fetched; but note that it only lists columns that have to be
-         * emitted by the ForeignScan plan node, not columns that are used in
-         * qual evaluation but not output by the query.
-         *
-         * baserel->baserestrictinfo is particularly interesting, as it contains
-         * restriction quals (WHERE clauses) that should be used to filter the
-         * rows to be fetched. (The FDW itself is not required to enforce these
-         * quals, as the core executor can check them instead.)
-         *
-         * For more details see: https://www.postgresql.org/docs/12/fdw-planning.html
-         */
+		 * Pull "var" clauses to build an appropriate target list
+		 *
+		 * baserel->reltarget->exprs can be used to determine which columns need
+		 * to be fetched; but note that it only lists columns that have to be
+		 * emitted by the ForeignScan plan node, not columns that are used in
+		 * qual evaluation but not output by the query.
+		 *
+		 * baserel->baserestrictinfo is particularly interesting, as it contains
+		 * restriction quals (WHERE clauses) that should be used to filter the
+		 * rows to be fetched. (The FDW itself is not required to enforce these
+		 * quals, as the core executor can check them instead.)
+		 *
+		 * For more details see: https://www.postgresql.org/docs/12/fdw-planning.html
+		 */
 		foreach(lc, extractColumns(baserel->reltarget->exprs, baserel->baserestrictinfo))
 		{
 			Var		   *var = (Var *) lfirst(lc);
@@ -347,15 +347,15 @@ multicornGetForeignRelSize(PlannerInfo *root,
 	{
 		extractRestrictions(
 #if PG_VERSION_NUM >= 140000
-			root,
+			root, 
 #endif
-			baserel->relids,
+			baserel->relids, 
 			((RestrictInfo *) lfirst(lc))->clause,
 			&planstate->qual_list);
 
 	}
 
-    planstate->baserestrictinfo = baserel->baserestrictinfo;
+	planstate->baserestrictinfo = baserel->baserestrictinfo;
 
 	/* Inject the "rows" and "width" attribute into the baserel */
 	getRelSize(planstate, root, &baserel->rows, &baserel->reltarget->width);
@@ -447,7 +447,7 @@ multicornGetForeignPaths(PlannerInfo *root,
  */
 static ForeignScan *
 multicornGetForeignPlan(PlannerInfo *root,
-						RelOptInfo *foreignrel,
+						RelOptInfo *baserel,
 						Oid foreigntableid,
 						ForeignPath *best_path,
 						List *tlist,
@@ -455,19 +455,19 @@ multicornGetForeignPlan(PlannerInfo *root,
 						, Plan *outer_plan
 		)
 {
-    MulticornPlanState *ofpinfo, *planstate = (MulticornPlanState *) foreignrel->fdw_private;
-    Index		scan_relid;
+	Index		scan_relid;
+	MulticornPlanState *ofpinfo, *planstate = (MulticornPlanState *) baserel->fdw_private;
 	List	   *fdw_scan_tlist = NIL;
-    ListCell   *lc;
+	ListCell   *lc;
 
 	best_path->path.pathtarget->width = planstate->width;
 
-    if (IS_SIMPLE_REL(foreignrel))
+	if (IS_SIMPLE_REL(baserel))
 	{
 		/*
 		 * For base relations, set scan_relid as the relid of the relation.
 		 */
-		scan_relid = foreignrel->relid;
+		scan_relid = baserel->relid;
 	}
 	else
 	{
@@ -484,13 +484,13 @@ multicornGetForeignPlan(PlannerInfo *root,
 		Assert(!scan_clauses);
 
 		/* Build the list of columns to be fetched from the foreign server. */
-		fdw_scan_tlist = multicorn_build_tlist_to_deparse(foreignrel);
+		fdw_scan_tlist = multicorn_build_tlist_to_deparse(baserel);
 	}
 
-    best_path->path.pathtarget->width = planstate->width;
-    planstate->pathkeys = (List *) best_path->fdw_private;
+	best_path->path.pathtarget->width = planstate->width;
+	planstate->pathkeys = (List *) best_path->fdw_private;
 
-    scan_clauses = extract_actual_clauses(scan_clauses, false);
+	scan_clauses = extract_actual_clauses(scan_clauses, false);
 	/* Extract the quals coming from a parameterized path, if any */
 	if (best_path->path.param_info)
 	{
@@ -499,45 +499,45 @@ multicornGetForeignPlan(PlannerInfo *root,
 		{
 			extractRestrictions(
 #if PG_VERSION_NUM >= 140000
-				root,
+				root, 
 #endif
-				foreignrel->relids,
+				baserel->relids, 
 				(Expr *) lfirst(lc),
 				&planstate->qual_list);
 		}
 	}
 
-    /* Extract data needed for aggregations on the Python side */
-    if (IS_UPPER_REL(foreignrel))
-    {
-        /*
-         * TODO: fdw_scan_tlist is present in the execute phase as well, via
-         * node->ss.ps.plan.fdw_scan_tlist, and instead of root, one can employ
-         * rte = exec_rt_fetch(rtindex, estate) to fetch the column name through
-         * get_attname.
-         *
-         * Migrating the below function into multicornBeginForeignScan would thus
-         * reduce the duplication of plan and execute fields that are now being
-         * serialized.
-         */
-        multicorn_extract_upper_rel_info(root, fdw_scan_tlist, planstate);
+	/* Extract data needed for aggregations on the Python side */
+	if (IS_UPPER_REL(baserel))
+	{
+		/*
+		 * TODO: fdw_scan_tlist is present in the execute phase as well, via
+		 * node->ss.ps.plan.fdw_scan_tlist, and instead of root, one can employ
+		 * rte = exec_rt_fetch(rtindex, estate) to fetch the column name through
+		 * get_attname.
+		 *
+		 * Migrating the below function into multicornBeginForeignScan would thus
+		 * reduce the duplication of plan and execute fields that are now being
+		 * serialized.
+		 */
+		multicorn_extract_upper_rel_info(root, fdw_scan_tlist, planstate);
 
-        /*
-         * Since scan_clauses are empty in case of upper relations for some
-         * reason. We pass the clauses from the base relation obtained in MulticornGetForeignRelSize.
-         */
-        ofpinfo = (MulticornPlanState *) planstate->outerrel->fdw_private;
-        planstate->baserestrictinfo = extract_actual_clauses(ofpinfo->baserestrictinfo, false);
-    }
+		/*
+		 * Since scan_clauses are empty in case of upper relations for some
+		 * reason. We pass the clauses from the base relation obtained in MulticornGetForeignRelSize.
+		 */
+		ofpinfo = (MulticornPlanState *) planstate->outerrel->fdw_private;
+		planstate->baserestrictinfo = extract_actual_clauses(ofpinfo->baserestrictinfo, false);
+	}
 
 	return make_foreignscan(tlist,
 							scan_clauses,
 							scan_relid,
 							scan_clauses,		/* no expressions to evaluate */
-							serializePlanState(planstate)
-							, fdw_scan_tlist
-							, NULL /* All quals are meant to be rechecked */
-							, outer_plan
+							serializePlanState(planstate),
+							fdw_scan_tlist,
+							NULL,				/* All quals are meant to be rechecked */
+							outer_plan
 							);
 }
 
@@ -576,35 +576,35 @@ multicornBeginForeignScan(ForeignScanState *node, int eflags)
 	ForeignScan *fscan = (ForeignScan *) node->ss.ps.plan;
 	MulticornExecState *execstate;
 	ListCell   *lc;
-    int			rtindex;
-    List *clauses;
+	int			rtindex;
+	List *clauses;
 	elog(DEBUG3, "starting BeginForeignScan()");
 
-    execstate = initializeExecState(fscan->fdw_private);
+	execstate = initializeExecState(fscan->fdw_private);
 
-    /*
+	/*
 	 * Get info we'll need for converting data fetched from the foreign server
 	 * into local representation and error reporting during that process.
 	 */
 	if (fscan->scan.scanrelid > 0)
 	{
-        /*
-         * Simple/base relation
-         */
+		/*
+		 * Simple/base relation
+		 */
 
 		execstate->rel = node->ss.ss_currentRelation;
 		execstate->tupdesc = RelationGetDescr(execstate->rel);
-        initConversioninfo(execstate->cinfos, TupleDescGetAttInMetadata(execstate->tupdesc), NULL);
+		initConversioninfo(execstate->cinfos, TupleDescGetAttInMetadata(execstate->tupdesc), NULL);
 
-        // Needed for parsing quals
-        rtindex = fscan->scan.scanrelid;
-        clauses = fscan->fdw_exprs;
+		// Needed for parsing quals
+		rtindex = fscan->scan.scanrelid;
+		clauses = fscan->fdw_exprs;
 	}
 	else
 	{
-        /*
-         * Upper (aggregation) relation
-         */
+		/*
+		 * Upper (aggregation) relation
+		 */
 
 		execstate->rel = NULL;
 #if (PG_VERSION_NUM >= 140000)
@@ -612,31 +612,31 @@ multicornBeginForeignScan(ForeignScanState *node, int eflags)
 #else
 		execstate->tupdesc = node->ss.ss_ScanTupleSlot->tts_tupleDescriptor;
 #endif
-        initConversioninfo(execstate->cinfos, TupleDescGetAttInMetadata(execstate->tupdesc), execstate->upper_rel_targets);
+		initConversioninfo(execstate->cinfos, TupleDescGetAttInMetadata(execstate->tupdesc), execstate->upper_rel_targets);
 
-        /*
-         * In case of a join or aggregate use the lowest-numbered member RTE out
-         * of all all the base relations participating in the underlying scan.
-         * NB: This may not work well in case of joins, keep an eye out for it.
-         */
-        rtindex = bms_next_member(fscan->fs_relids, -1);
-        clauses = execstate->baserestrictinfo;
+		/*
+		 * In case of a join or aggregate use the lowest-numbered member RTE out
+		 * of all all the base relations participating in the underlying scan.
+		 * NB: This may not work well in case of joins, keep an eye out for it.
+		 */
+		rtindex = bms_next_member(fscan->fs_relids, -1);
+		clauses = execstate->baserestrictinfo;
 	}
 
 	execstate->values = palloc(sizeof(Datum) * execstate->tupdesc->natts);
 	execstate->nulls = palloc(sizeof(bool) * execstate->tupdesc->natts);
-    execstate->qual_list = NULL;
-    foreach(lc, clauses)
-    {
+	execstate->qual_list = NULL;
+	foreach(lc, clauses)
+	{
 		elog(DEBUG3, "looping in beginForeignScan()");
 		extractRestrictions(
 #if PG_VERSION_NUM >= 140000
-NULL,
+							NULL,
 #endif
-bms_make_singleton(rtindex),
-                            ((Expr *) lfirst(lc)),
-                            &execstate->qual_list);
-    }
+							bms_make_singleton(rtindex),
+							((Expr *) lfirst(lc)),
+							&execstate->qual_list);
+	}
 	node->fdw_state = execstate;
 }
 
@@ -816,7 +816,7 @@ multicornBeginForeignModify(ModifyTableState *mtstate,
 	MulticornModifyState *modstate = palloc0(sizeof(MulticornModifyState));
 	Relation	rel = resultRelInfo->ri_RelationDesc;
 	TupleDesc	desc = RelationGetDescr(rel);
-	PlanState  *ps =
+	PlanState  *ps = 
 #if PG_VERSION_NUM >= 140000
 		outerPlanState(mtstate);
 #else
@@ -1183,15 +1183,15 @@ multicorn_merge_fdw_options(MulticornPlanState *fpinfo,
 	fpinfo->use_remote_estimate = fpinfo_o->use_remote_estimate;
 	fpinfo->fetch_size = fpinfo_o->fetch_size;
 
-    /* Multicorn specific options, differing from othe FDW implementations */
-    fpinfo->fdw_instance = fpinfo_o->fdw_instance;
-    fpinfo->foreigntableid = fpinfo_o->foreigntableid;
+	/* Multicorn specific options, differing from othe FDW implementations */
+	fpinfo->fdw_instance = fpinfo_o->fdw_instance;
+	fpinfo->foreigntableid = fpinfo_o->foreigntableid;
 	fpinfo->numattrs = fpinfo_o->numattrs;
-    fpinfo->cinfos = fpinfo_o->cinfos;
-    fpinfo->pathkeys = fpinfo_o->pathkeys;
-    fpinfo->target_list = fpinfo_o->target_list;
-    fpinfo->qual_list = fpinfo_o->qual_list;
-    fpinfo->pathkeys = fpinfo_o->pathkeys;
+	fpinfo->cinfos = fpinfo_o->cinfos;
+	fpinfo->pathkeys = fpinfo_o->pathkeys;
+	fpinfo->target_list = fpinfo_o->target_list;
+	fpinfo->qual_list = fpinfo_o->qual_list;
+	fpinfo->pathkeys = fpinfo_o->pathkeys;
 
 	/* Merge the table level options from either side of the join. */
 	if (fpinfo_i)
@@ -1223,13 +1223,13 @@ multicorn_merge_fdw_options(MulticornPlanState *fpinfo,
  */
 static bool
 multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
-                              Node *havingQual)
+							  Node *havingQual)
 {
 	Query	   *query = root->parse;
 	MulticornPlanState *fpinfo = (MulticornPlanState *) grouped_rel->fdw_private;
-    PathTarget *grouping_target = grouped_rel->reltarget;
-    // Q: Or perhaps like in SQLite FDW `PathTarget *grouping_target = root->upper_targets[UPPERREL_GROUP_AGG];`?
-    // A: It appears they are the same thing; see also GridDBs sortgrouprefs explanation
+	PathTarget *grouping_target = grouped_rel->reltarget;
+	// Q: Or perhaps like in SQLite FDW `PathTarget *grouping_target = root->upper_targets[UPPERREL_GROUP_AGG];`?
+	// A: It appears they are the same thing; see also GridDBs sortgrouprefs explanation
 	MulticornPlanState *ofpinfo;
 	ListCell   *lc;
 	int			i;
@@ -1242,38 +1242,38 @@ multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 	/* Get the fpinfo of the underlying scan relation. */
 	ofpinfo = (MulticornPlanState *) fpinfo->outerrel->fdw_private;
 
-    /*
+	/*
 	 * If underlying scan relation has more quals than we are attempting to push
-     * down, this means that some are missing in qual_list, hence the aggregation
-     * wouldn't be correct. Examples includes using a float value in a WHERE clause
-     * against a column of integer type.
-     * NB: If we ever decide to add support for join-agg pushdown this won't work.
+	 * down, this means that some are missing in qual_list, hence the aggregation
+	 * wouldn't be correct. Examples includes using a float value in a WHERE clause
+	 * against a column of integer type.
+	 * NB: If we ever decide to add support for join-agg pushdown this won't work.
 	 */
-    if (list_length(ofpinfo->qual_list) < list_length(fpinfo->outerrel->baserestrictinfo))
-    {
-        return false;
-    }
+	if (list_length(ofpinfo->qual_list) < list_length(fpinfo->outerrel->baserestrictinfo))
+	{
+		return false;
+	}
 
 	/*
 	 * If underlying scan relation has any quals with unsupported operators
-     * we cannot pushdown the aggregation.
+	 * we cannot pushdown the aggregation.
 	 */
-    foreach(lc, ofpinfo->qual_list)
-    {
-        MulticornBaseQual *qual = (MulticornBaseQual *) lfirst(lc);
+	foreach(lc, ofpinfo->qual_list)
+	{
+		MulticornBaseQual *qual = (MulticornBaseQual *) lfirst(lc);
 
-        if (!list_member(ofpinfo->operators_supported, makeString(qual->opname)))
-            return false;
-    }
+		if (!list_member(ofpinfo->operators_supported, makeString(qual->opname)))
+			return false;
+	}
 
-    /*
+	/*
 	 * Examine grouping expressions, as well as other expressions we'd need to
 	 * compute, and check whether they are safe to push down to the foreign
 	 * server.  All GROUP BY expressions will be part of the grouping target
 	 * and thus there is no need to search for them separately.  Add grouping
 	 * expressions into target list which will be passed to foreign server.
-     *
-     * A tricky fine point is that we must not put any expression into the
+	 *
+	 * A tricky fine point is that we must not put any expression into the
 	 * target list that is just a foreign param (that is, something that
 	 * deparse.c would conclude has to be sent to the foreign server).  If we
 	 * do, the expression will also appear in the fdw_exprs list of the plan
@@ -1294,12 +1294,12 @@ multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 		{
 			TargetEntry *tle;
 
-            /*
+			/*
 			 * Ensure GROUP BY clauses are shippable at all by the corresponding
-             * Python FDW instance.
+			 * Python FDW instance.
 			 */
-            if (!fpinfo->groupby_supported)
-                return false;
+			if (!fpinfo->groupby_supported)
+				return false;
 
 			/*
 			 * If any GROUP BY expression is not shippable, then we cannot
@@ -1329,12 +1329,12 @@ multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 		}
 		else
 		{
-            /*
+			/*
 			 * Ensure aggregation functions are shippable at all by the corresponding
-             * Python FDW instance.
+			 * Python FDW instance.
 			 */
-            if (!fpinfo->agg_functions)
-                return false;
+			if (!fpinfo->agg_functions)
+				return false;
 
 			/*
 			 * Non-grouping expression we need to compute.  Can we ship it
@@ -1349,12 +1349,12 @@ multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 			else
 			{
 				/* Not pushable as a whole; extract its Vars and aggregates */
-                List	   *aggvars;
+				List	   *aggvars;
 
 				aggvars = pull_var_clause((Node *) expr,
 										  PVC_INCLUDE_AGGREGATES);
 
-                /*
+				/*
 				 * If any aggregate expression is not shippable, then we
 				 * cannot push down aggregation to the foreign server.  (We
 				 * don't have to check is_foreign_param, since that certainly
@@ -1387,12 +1387,12 @@ multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 	}
 
 	/*
-     * TODO: Enable HAVING clause pushdowns.
-     * Note that certain simple HAVING clauses get transformed to WHERE clauses
-     * internally for performance reasons, i.e. smaller scan size. Example is a
-     * HAVING clause on a column that is also a part of the GROUP BY clause, in
-     * which case WHERE clause effectively achieves the same thing. In those
-     * cases the havingQual is NULL, even though root->hasHavingQual is true.
+	 * TODO: Enable HAVING clause pushdowns.
+	 * Note that certain simple HAVING clauses get transformed to WHERE clauses
+	 * internally for performance reasons, i.e. smaller scan size. Example is a
+	 * HAVING clause on a column that is also a part of the GROUP BY clause, in
+	 * which case WHERE clause effectively achieves the same thing. In those
+	 * cases the havingQual is NULL, even though root->hasHavingQual is true.
 	 */
 	if (havingQual)
 	{
@@ -1438,7 +1438,7 @@ multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
  */
 static void
 multicornGetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
-						      RelOptInfo *input_rel, RelOptInfo *output_rel, void *extra
+							  RelOptInfo *input_rel, RelOptInfo *output_rel, void *extra
 )
 {
 	MulticornPlanState *fpinfo;
@@ -1455,17 +1455,17 @@ multicornGetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
 	if (stage != UPPERREL_GROUP_AGG || output_rel->fdw_private)
 		return;
 
-    /*
-     * Check with the Python FDW instance whether it supports pushdown at all
-     * NB: Here we deviate from other FDWs, in that we don't know whether the
-     * something can be pushed down without consulting the corresponding Python
-     * FDW instance.
-     */
+	/*
+	 * Check with the Python FDW instance whether it supports pushdown at all
+	 * NB: Here we deviate from other FDWs, in that we don't know whether the
+	 * something can be pushed down without consulting the corresponding Python
+	 * FDW instance.
+	 */
 
-    if (!canPushdownUpperrel((MulticornPlanState *) input_rel->fdw_private))
-    {
-        return;
-    }
+	if (!canPushdownUpperrel((MulticornPlanState *) input_rel->fdw_private))
+	{
+		return;
+	}
 
 	fpinfo = (MulticornPlanState *) palloc0(sizeof(MulticornPlanState));
 	fpinfo->pushdown_safe = false;
@@ -1492,8 +1492,8 @@ multicornGetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
  */
 static void
 multicorn_add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
-								     RelOptInfo *grouped_rel,
-                                     GroupPathExtraData *extra
+									 RelOptInfo *grouped_rel,
+									 GroupPathExtraData *extra
 )
 {
 	Query	   *parse = root->parse;
@@ -1520,24 +1520,24 @@ multicorn_add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	 * Copy foreign table, foreign server, user mapping, shippable extensions
 	 * etc. details from the input relation's fpinfo.
 	 */
-    fpinfo->table = ifpinfo->table;
+	fpinfo->table = ifpinfo->table;
 	fpinfo->server = ifpinfo->server;
 	fpinfo->user = ifpinfo->user;
 
-    /* copy the upperrel pushdown info as well */
-    fpinfo->groupby_supported = ifpinfo->groupby_supported;
+	/* copy the upperrel pushdown info as well */
+	fpinfo->groupby_supported = ifpinfo->groupby_supported;
 	fpinfo->agg_functions = ifpinfo->agg_functions;
 
-    multicorn_merge_fdw_options(fpinfo, ifpinfo, NULL);
+	multicorn_merge_fdw_options(fpinfo, ifpinfo, NULL);
 
-    /*
+	/*
 	 * Assess if it is safe to push down aggregation and grouping.
 	 *
 	 * Use HAVING qual from extra. In case of child partition, it will have
 	 * translated Vars.
 	 */
 	if (!multicorn_foreign_grouping_ok(root, grouped_rel, extra->havingQual))
-    	return;
+		return;
 
 	/* Use small cost to push down aggregate always */
 	rows = width = startup_cost = total_cost = 1;
@@ -1579,13 +1579,13 @@ serializePlanState(MulticornPlanState * state)
 
 	result = lappend(result, serializeDeparsedSortGroup(state->pathkeys));
 
-    result = lappend(result, state->upper_rel_targets);
+	result = lappend(result, state->upper_rel_targets);
 
-    result = lappend(result, state->aggs);
+	result = lappend(result, state->aggs);
 
-    result = lappend(result, state->group_clauses);
+	result = lappend(result, state->group_clauses);
 
-    result = lappend(result, state->baserestrictinfo);
+	result = lappend(result, state->baserestrictinfo);
 
 	return result;
 }
@@ -1603,15 +1603,15 @@ initializeExecState(void *internalstate)
 	Oid			foreigntableid = ((Const *) lsecond(values))->constvalue;
 	List		*pathkeys;
 
-    ForeignTable *ftable = GetForeignTable(foreigntableid);
-    Relation	rel = RelationIdGetRelation(ftable->relid);
-    AttInMetadata *attinmeta;
+	ForeignTable *ftable = GetForeignTable(foreigntableid);
+	Relation	rel = RelationIdGetRelation(ftable->relid);
+	AttInMetadata *attinmeta;
 
-    attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
-    execstate->qual_cinfos = palloc0(sizeof(ConversionInfo *) *
-                                     attinmeta->tupdesc->natts);
-    initConversioninfo(execstate->qual_cinfos, attinmeta, NULL);
-    RelationClose(rel);
+	attinmeta = TupleDescGetAttInMetadata(rel->rd_att);
+	execstate->qual_cinfos = palloc0(sizeof(ConversionInfo *) *
+									 attinmeta->tupdesc->natts);
+	initConversioninfo(execstate->qual_cinfos, attinmeta, NULL);
+	RelationClose(rel);
 
 	/* Those list must be copied, because their memory context can become */
 	/* invalid during the execution (in particular with the cursor interface) */
@@ -1623,9 +1623,9 @@ initializeExecState(void *internalstate)
 	execstate->cinfos = palloc0(sizeof(ConversionInfo *) * attnum);
 	execstate->values = palloc(attnum * sizeof(Datum));
 	execstate->nulls = palloc(attnum * sizeof(bool));
-    execstate->upper_rel_targets = list_nth(values, 4);
-    execstate->aggs = list_nth(values, 5);
-    execstate->group_clauses = list_nth(values, 6);
-    execstate->baserestrictinfo = list_nth(values, 7);
+	execstate->upper_rel_targets = list_nth(values, 4);
+	execstate->aggs = list_nth(values, 5);
+	execstate->group_clauses = list_nth(values, 6);
+	execstate->baserestrictinfo = list_nth(values, 7);
 	return execstate;
 }

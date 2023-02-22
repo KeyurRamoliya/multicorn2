@@ -150,9 +150,9 @@ such as pymysql):
 
 """
 
+from sqlalchemy import cast, create_engine, literal
 from . import ForeignDataWrapper, TableDefinition, ColumnDefinition
 from .utils import log_to_postgres, ERROR, WARNING, DEBUG
-from sqlalchemy import create_engine
 from sqlalchemy.engine.url import make_url, URL
 from sqlalchemy.sql import select, operators as sqlops, func, and_
 from sqlalchemy.sql.expression import nullsfirst, nullslast
@@ -290,6 +290,8 @@ class SqlAlchemyFdw(ForeignDataWrapper):
         self.engine = create_engine(url)
         schema = fdw_options['schema'] if 'schema' in fdw_options else None
         tablename = fdw_options['tablename']
+        self.cast_quals = fdw_options.get("cast_quals", "false") == "true"
+
         sqlacols = []
         for col in fdw_columns.values():
             col_type = self._get_column_type(col.type_name)
@@ -369,8 +371,10 @@ class SqlAlchemyFdw(ForeignDataWrapper):
         for qual in quals:
             operator = OPERATORS.get(qual.operator, None)
             if operator:
-                clauses.append(operator(self.table.c[qual.field_name],
-                                        qual.value))
+                value = qual.value if not self.cast_quals \
+                    else cast(literal(qual.value), self.table.c[qual.field_name].type.as_generic())
+
+                clauses.append(operator(self.table.c[qual.field_name], value))
             else:
                 log_to_postgres('Qual not pushed to foreign db: %s' % qual,
                                 WARNING)

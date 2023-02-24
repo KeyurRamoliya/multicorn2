@@ -327,6 +327,7 @@ Value
 String
 #endif
 *colnameFromVar(Var *var, PlannerInfo *root,
+		MulticornPlanState * state);
 
 void computeDeparsedSortGroup(List *deparsed, MulticornPlanState *planstate,
 		List **apply_pathkeys,

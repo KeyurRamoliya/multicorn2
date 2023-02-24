@@ -104,7 +104,10 @@ static void multicorn_subxact_callback(SubXactEvent event, SubTransactionId mySu
 						   SubTransactionId parentSubid, void *arg);
 
 static void multicornGetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
-							  RelOptInfo *input_rel, RelOptInfo *output_rel, void *extra
+							  RelOptInfo *input_rel, RelOptInfo *output_rel
+#if PG_VERSION_NUM >= 110000
+							  , void *extra
+#endif
 		);
 
 static List *multicornImportForeignSchema(ImportForeignSchemaStmt * stmt,
@@ -113,12 +116,10 @@ static List *multicornImportForeignSchema(ImportForeignSchemaStmt * stmt,
 static void multicorn_xact_callback(XactEvent event, void *arg);
 
 /* Functions relating to aggregation/grouping pushdown */
-static bool multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
-										  Node *havingQual);
+static bool multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel);
 static void multicorn_add_foreign_grouping_paths(PlannerInfo *root,
 											  RelOptInfo *input_rel,
-											  RelOptInfo *grouped_rel,
-											  GroupPathExtraData *extra
+											  RelOptInfo *grouped_rel
 );
 
 /*	Helpers functions */
@@ -347,9 +348,9 @@ multicornGetForeignRelSize(PlannerInfo *root,
 	{
 		extractRestrictions(
 #if PG_VERSION_NUM >= 140000
-			root, 
+			root,
 #endif
-			baserel->relids, 
+			baserel->relids,
 			((RestrictInfo *) lfirst(lc))->clause,
 			&planstate->qual_list);
 
@@ -499,9 +500,9 @@ multicornGetForeignPlan(PlannerInfo *root,
 		{
 			extractRestrictions(
 #if PG_VERSION_NUM >= 140000
-				root, 
+				root,
 #endif
-				baserel->relids, 
+				baserel->relids,
 				(Expr *) lfirst(lc),
 				&planstate->qual_list);
 		}
@@ -607,11 +608,7 @@ multicornBeginForeignScan(ForeignScanState *node, int eflags)
 		 */
 
 		execstate->rel = NULL;
-#if (PG_VERSION_NUM >= 140000)
-		execstate->tupdesc = multicorn_get_tupdesc_for_join_scan_tuples(node);
-#else
 		execstate->tupdesc = node->ss.ss_ScanTupleSlot->tts_tupleDescriptor;
-#endif
 		initConversioninfo(execstate->cinfos, TupleDescGetAttInMetadata(execstate->tupdesc), execstate->upper_rel_targets);
 
 		/*
@@ -816,7 +813,7 @@ multicornBeginForeignModify(ModifyTableState *mtstate,
 	MulticornModifyState *modstate = palloc0(sizeof(MulticornModifyState));
 	Relation	rel = resultRelInfo->ri_RelationDesc;
 	TupleDesc	desc = RelationGetDescr(rel);
-	PlanState  *ps = 
+	PlanState  *ps =
 #if PG_VERSION_NUM >= 140000
 		outerPlanState(mtstate);
 #else
@@ -1222,8 +1219,7 @@ multicorn_merge_fdw_options(MulticornPlanState *fpinfo,
  * this function to MulticornPlanState of the input relation.
  */
 static bool
-multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
-							  Node *havingQual)
+multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel)
 {
 	Query	   *query = root->parse;
 	MulticornPlanState *fpinfo = (MulticornPlanState *) grouped_rel->fdw_private;
@@ -1386,19 +1382,6 @@ multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
 		i++;
 	}
 
-	/*
-	 * TODO: Enable HAVING clause pushdowns.
-	 * Note that certain simple HAVING clauses get transformed to WHERE clauses
-	 * internally for performance reasons, i.e. smaller scan size. Example is a
-	 * HAVING clause on a column that is also a part of the GROUP BY clause, in
-	 * which case WHERE clause effectively achieves the same thing. In those
-	 * cases the havingQual is NULL, even though root->hasHavingQual is true.
-	 */
-	if (havingQual)
-	{
-		return false;
-	}
-
 	/* Store generated targetlist */
 	fpinfo->grouped_tlist = tlist;
 
@@ -1438,7 +1421,10 @@ multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel,
  */
 static void
 multicornGetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
-							  RelOptInfo *input_rel, RelOptInfo *output_rel, void *extra
+							  RelOptInfo *input_rel, RelOptInfo *output_rel
+#if PG_VERSION_NUM >= 110000
+							  , void *extra
+#endif
 )
 {
 	MulticornPlanState *fpinfo;
@@ -1475,7 +1461,7 @@ multicornGetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
 	switch (stage)
 	{
 		case UPPERREL_GROUP_AGG:
-			multicorn_add_foreign_grouping_paths(root, input_rel, output_rel, (GroupPathExtraData *) extra);
+			multicorn_add_foreign_grouping_paths(root, input_rel, output_rel);
 			break;
 		default:
 			elog(ERROR, "unexpected upper relation: %d", (int) stage);
@@ -1492,9 +1478,7 @@ multicornGetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
  */
 static void
 multicorn_add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
-									 RelOptInfo *grouped_rel,
-									 GroupPathExtraData *extra
-)
+									 RelOptInfo *grouped_rel)
 {
 	Query	   *parse = root->parse;
 	MulticornPlanState *ifpinfo = input_rel->fdw_private;
@@ -1509,9 +1493,6 @@ multicorn_add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	if (!parse->groupClause && !parse->groupingSets && !parse->hasAggs &&
 		!root->hasHavingQual)
 		return;
-
-	Assert(extra->patype == PARTITIONWISE_AGGREGATE_NONE ||
-		   extra->patype == PARTITIONWISE_AGGREGATE_FULL);
 
 	/* save the input_rel as outerrel in fpinfo */
 	fpinfo->outerrel = input_rel;
@@ -1536,7 +1517,7 @@ multicorn_add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	 * Use HAVING qual from extra. In case of child partition, it will have
 	 * translated Vars.
 	 */
-	if (!multicorn_foreign_grouping_ok(root, grouped_rel, extra->havingQual))
+	if (!multicorn_foreign_grouping_ok(root, grouped_rel))
 		return;
 
 	/* Use small cost to push down aggregate always */
@@ -1548,6 +1529,18 @@ multicorn_add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	fpinfo->total_cost = total_cost;
 
 	/* Create and add foreign path to the grouping relation. */
+#if PG_VERSION_NUM < 120000
+	grouppath = create_foreignscan_path(root,
+										  grouped_rel,
+										  grouped_rel->reltarget,
+										  rows,
+										  startup_cost,
+										  total_cost,
+										  NIL,	/* no pathkeys */
+										  NULL,
+										  NULL,
+										  NIL); /* no fdw_private */
+#else
 	grouppath = create_foreign_upper_path(root,
 										  grouped_rel,
 										  grouped_rel->reltarget,
@@ -1557,7 +1550,7 @@ multicorn_add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 										  NIL,	/* no pathkeys */
 										  NULL,
 										  NIL); /* no fdw_private */
-
+#endif
 	/* Add generated path into grouped_rel by add_path(). */
 	add_path(grouped_rel, (Path *) grouppath);
 }

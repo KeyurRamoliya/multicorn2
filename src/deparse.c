@@ -24,7 +24,11 @@
 #include "nodes/nodeFuncs.h"
 #include "nodes/plannodes.h"
 #include "optimizer/clauses.h"
+#if PG_VERSION_NUM < 120000
+#include "optimizer/var.h"
+#else
 #include "optimizer/optimizer.h"
+#endif
 #include "optimizer/tlist.h"
 #include "parser/parsetree.h"
 #include "utils/builtins.h"
@@ -74,7 +78,13 @@ typedef struct foreign_loc_cxt
 	FDWCollateState state;		/* state of current collation choice */
 } foreign_loc_cxt;
 
-static Value *multicorn_deparse_function_name(Oid funcid);
+static
+#if PG_VERSION_NUM < 150000
+Value
+#else
+String
+#endif
+*multicorn_deparse_function_name(Oid funcid);
 
 
 /*
@@ -98,7 +108,11 @@ static Value *multicorn_deparse_function_name(Oid funcid);
 static bool
 multicorn_is_builtin(Oid oid)
 {
+#if PG_VERSION_NUM < 150000
 	return (oid < FirstBootstrapObjectId);
+#else
+	return (oid < FirstUnpinnedObjectId);
+#endif
 }
 
 /*
@@ -478,7 +492,6 @@ multicorn_build_tlist_to_deparse(RelOptInfo *foreignrel)
 {
 	List	   *tlist = NIL;
 	MulticornPlanState *fpinfo = (MulticornPlanState *) foreignrel->fdw_private;
-	ListCell   *lc;
 
 	/*
 	 * For an upper relation, we have already built the target list while
@@ -507,7 +520,11 @@ multicorn_extract_upper_rel_info(PlannerInfo *root, List *tlist, MulticornPlanSt
 	ListCell *lc;
 	TargetEntry *tle;
 	Var *var;
+#if PG_VERSION_NUM <= 150000
 	Value *colname, *function;
+#else
+	String *colname, *function;
+#endif
 	Aggref *aggref;
 	StringInfo agg_key = makeStringInfo();
 
@@ -519,7 +536,7 @@ multicorn_extract_upper_rel_info(PlannerInfo *root, List *tlist, MulticornPlanSt
 		{
 			/* GROUP BY target */
 			var = (Var *) tle->expr;
-			colname = colnameFromVar(var, root);
+			colname = colnameFromVar(var, root, fpinfo);
 
 			fpinfo->group_clauses = lappend(fpinfo->group_clauses, colname);
 			fpinfo->upper_rel_targets = lappend(fpinfo->upper_rel_targets, colname);
@@ -539,7 +556,7 @@ multicorn_extract_upper_rel_info(PlannerInfo *root, List *tlist, MulticornPlanSt
 				var = linitial(pull_var_clause((Node *) aggref,
 											PVC_RECURSE_AGGREGATES |
 											PVC_RECURSE_PLACEHOLDERS));
-				colname = colnameFromVar(var, root);
+				colname = colnameFromVar(var, root, fpinfo);
 			}
 
 			initStringInfo(agg_key);
@@ -557,8 +574,13 @@ multicorn_extract_upper_rel_info(PlannerInfo *root, List *tlist, MulticornPlanSt
  * multicorn_deparse_function_name
  *		Deparses function name from given function oid.
  */
-static Value *
-multicorn_deparse_function_name(Oid funcid)
+
+#if PG_VERSION_NUM < 150000
+Value
+#else
+String
+#endif
+*multicorn_deparse_function_name(Oid funcid)
 {
 	HeapTuple	proctup;
 	Form_pg_proc procform;

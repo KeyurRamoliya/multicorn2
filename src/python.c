@@ -95,6 +95,8 @@ void appendBinaryStringInfoQuote(StringInfo buffer,
 							Py_ssize_t strlength,
 							bool need_quote);
 
+void pythonUnicodeSequenceToList(PyObject *pySequence, List **target);
+
 
 static void begin_remote_xact(CacheEntry * entry);
 
@@ -995,7 +997,7 @@ execute(ForeignScanState *node, ExplainState *es)
 
 			foreach(lc_agg, state->aggs)
 			{
-				PyObject    *agg,
+				PyObject	*agg,
 							*function,
 							*column;
 
@@ -1429,7 +1431,7 @@ pyobjectToDatum(PyObject *object, StringInfo buffer,
 void
 pythonUnicodeSequenceToList(PyObject *pySequence, List **target)
 {
-	PyObject    *p_item,
+	PyObject	*p_item,
 				*p_string;
 	Py_ssize_t	i,
 				size,
@@ -1770,7 +1772,7 @@ canSort(MulticornPlanState * state, List *deparsed)
 bool
 canPushdownUpperrel(MulticornPlanState * state)
 {
-	PyObject    *fdw_instance = state->fdw_instance,
+	PyObject	*fdw_instance = state->fdw_instance,
 				*p_upperrel_pushdown,
 				*p_object,
 				*p_agg_funcs,

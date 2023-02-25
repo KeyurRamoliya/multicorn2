@@ -87,6 +87,7 @@ typedef struct MulticornPlanState
 
 	/* Details about upperrel pushdown fetched from the Python FDW instance */
 	bool groupby_supported;
+	bool mutable_supported;
 	List *agg_functions;
 	List *operators_supported;
 

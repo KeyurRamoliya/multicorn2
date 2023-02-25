@@ -212,8 +212,7 @@ _PG_AGG_FUNC_MAPPING = {
     "min": func.min,
     "max": func.max,
     "sum": func.sum,
-    "count": func.count,
-    "count.*": func.count
+    "count": func.count
 }
 
 
@@ -360,8 +359,8 @@ class SqlAlchemyFdw(ForeignDataWrapper):
 
             if aggs is not None:
                 for agg_name, agg_props in aggs.items():
-                    agg_func = _PG_AGG_FUNC_MAPPING[agg_props["function"]]
-                    agg_target = agg_func() if agg_props["column"] == "*" else agg_func(self.table.c[agg_props["column"]])
+                    agg_func = _PG_AGG_FUNC_MAPPING[agg_props.function]
+                    agg_target = agg_func() if agg_props.column == "*" else agg_func(self.table.c[agg_props.column])
 
                     target_list.append(agg_target.label(agg_name))
 

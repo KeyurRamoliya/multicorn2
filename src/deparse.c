@@ -70,13 +70,10 @@ typedef struct foreign_loc_cxt
 	FDWCollateState state;		/* state of current collation choice */
 } foreign_loc_cxt;
 
-static
-#if PG_VERSION_NUM < 150000
-Value
-#else
-String
-#endif
-*multicorn_deparse_function_name(Oid funcid);
+typedef List *FunctionQName;
+
+static FunctionQName multicorn_deparse_function_name(Oid funcid);
+static void multicorn_free_function_tuple(FunctionQName function_name_tup);
 
 
 /*
@@ -129,7 +126,6 @@ multicorn_foreign_expr_walker(Node *node,
 	foreign_loc_cxt inner_cxt;
 	Oid			collation = InvalidOid;
 	FDWCollateState state = FDW_COLLATE_NONE;
-	HeapTuple	tuple;
 
 	/* Need do nothing for empty subexpressions */
 	if (node == NULL)
@@ -198,41 +194,20 @@ multicorn_foreign_expr_walker(Node *node,
 			break;
 		case T_Aggref:
 			{
-				Aggref	   *agg = (Aggref *) node;
-				ListCell   *lc;
-				char	   *opername = NULL;
-				StringInfo opername_composite = makeStringInfo();
-				Oid			schema;
-
-				/* get function name and schema */
-				tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(agg->aggfnoid));
-				if (!HeapTupleIsValid(tuple))
-				{
-					elog(ERROR, "cache lookup failed for function %u", agg->aggfnoid);
-				}
-				opername = pstrdup(((Form_pg_proc) GETSTRUCT(tuple))->proname.data);
-				schema = ((Form_pg_proc) GETSTRUCT(tuple))->pronamespace;
-				ReleaseSysCache(tuple);
-
-				/* ignore functions in other than the pg_catalog schema */
-				if (schema != PG_CATALOG_NAMESPACE)
-					return false;
+				Aggref	      *agg = (Aggref *) node;
+				ListCell      *lc;
+				FunctionQName opername = multicorn_deparse_function_name(agg->aggfnoid);
 
 				/* Make sure the specific function at hand is shippable
 				 * NB: here we deviate from standard FDW code, since the allowed
 				 * function list is fetched from the Python FDW instance
 				 */
-				if (agg->aggstar)
+				if (!list_member(fpinfo->agg_functions, opername))
 				{
-					initStringInfo(opername_composite);
-					appendStringInfoString(opername_composite, opername);
-					appendStringInfoString(opername_composite, ".*");
-
-					if (!list_member(fpinfo->agg_functions, makeString(opername_composite->data)))
-						return false;
-				}
-				else if (!list_member(fpinfo->agg_functions, makeString(opername)))
+					multicorn_free_function_tuple(opername);
 					return false;
+				}
+				multicorn_free_function_tuple(opername);
 
 				/* Not safe to pushdown when not in grouping context */
 				if (!IS_UPPER_REL(glob_cxt->foreignrel))
@@ -413,7 +388,7 @@ multicorn_is_foreign_expr(PlannerInfo *root,
 	 * be able to make this choice with more granularity. (We check this last
 	 * because it requires a lot of expensive catalog lookups.)
 	 */
-	if (contain_mutable_functions((Node *) expr))
+	if (fpinfo->mutable_supported || contain_mutable_functions((Node *) expr))
 		return false;
 
 	/* OK to evaluate on the remote server */
@@ -511,13 +486,15 @@ multicorn_extract_upper_rel_info(PlannerInfo *root, List *tlist, MulticornPlanSt
 	ListCell *lc;
 	TargetEntry *tle;
 	Var *var;
-#if PG_VERSION_NUM <= 150000
-	Value *colname, *function;
+#if PG_VERSION_NUM < 150000
+	Value *colname;
 #else
-	String *colname, *function;
+	String *colname;
 #endif
+	FunctionQName function;
 	Aggref *aggref;
-	StringInfo agg_key = makeStringInfo();
+	StringInfoData agg_key;
+	int agg_key_num = 0;
 
 	foreach(lc, tlist)
 	{
@@ -530,6 +507,7 @@ multicorn_extract_upper_rel_info(PlannerInfo *root, List *tlist, MulticornPlanSt
 			colname = colnameFromVar(var, root, fpinfo);
 
 			fpinfo->group_clauses = lappend(fpinfo->group_clauses, colname);
+			fpinfo->aggs = lappend(fpinfo->aggs, list_make3(colname, NULL, colname));
 			fpinfo->upper_rel_targets = lappend(fpinfo->upper_rel_targets, colname);
 		}
 		else
@@ -550,13 +528,10 @@ multicorn_extract_upper_rel_info(PlannerInfo *root, List *tlist, MulticornPlanSt
 				colname = colnameFromVar(var, root, fpinfo);
 			}
 
-			initStringInfo(agg_key);
-			appendStringInfoString(agg_key, strVal(function));
-			appendStringInfoString(agg_key, ".");
-			appendStringInfoString(agg_key, strVal(colname));
-
-			fpinfo->aggs = lappend(fpinfo->aggs, list_make3(makeString(agg_key->data), function, colname));
-			fpinfo->upper_rel_targets = lappend(fpinfo->upper_rel_targets, makeString(agg_key->data));
+			initStringInfo(&agg_key);
+			appendStringInfo(&agg_key, "#synth_column.%u", agg_key_num++);
+			fpinfo->aggs = lappend(fpinfo->aggs, list_make3(makeString(agg_key.data), function, colname));
+			fpinfo->upper_rel_targets = lappend(fpinfo->upper_rel_targets, makeString(agg_key.data));
 		}
 	}
 }
@@ -566,24 +541,45 @@ multicorn_extract_upper_rel_info(PlannerInfo *root, List *tlist, MulticornPlanSt
  *		Deparses function name from given function oid.
  */
 
-#if PG_VERSION_NUM < 150000
-Value
-#else
-String
-#endif
-*multicorn_deparse_function_name(Oid funcid)
+FunctionQName multicorn_deparse_function_name(Oid funcid)
 {
-	HeapTuple	proctup;
-	Form_pg_proc procform;
-	char *proname;
+	HeapTuple	tuple;
+	Oid			schema;
+	char		*proname,
+				*nspname;
 
-	proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
-	if (!HeapTupleIsValid(proctup))
+	tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(funcid));
+	if (!HeapTupleIsValid(tuple))
 		elog(ERROR, "cache lookup failed for function %u", funcid);
-	procform = (Form_pg_proc) GETSTRUCT(proctup);
+	proname = ((Form_pg_proc) GETSTRUCT(tuple))->proname.data;
+	schema = ((Form_pg_proc) GETSTRUCT(tuple))->pronamespace;
+	ReleaseSysCache(tuple);
+	/* fully qualify functions in other spaces than pg_catalog */
+	if (schema == PG_CATALOG_NAMESPACE)
+		return list_make2(NULL, makeString(pstrdup(proname)));
 
-	proname = NameStr(procform->proname);
+	tuple = SearchSysCache1(NAMESPACEOID, ObjectIdGetDatum(schema));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for schema %u", schema);
+    nspname = ((Form_pg_namespace) GETSTRUCT(tuple))->nspname.data;
+	ReleaseSysCache(tuple);
 
-	ReleaseSysCache(proctup);
-	return makeString(proname);
+	return list_make2(makeString(pstrdup(nspname)), makeString(pstrdup(proname)));
+}
+
+void multicorn_free_function_tuple(FunctionQName function_name_tup) {
+#if PG_VERSION_NUM < 150000
+	Value	*schema = linitial_node(Value, function_name_tup),
+			*function = lsecond_node(Value, function_name_tup);
+#else
+	String	*schema = linitial_node(String, function_name_tup),
+			*function = lsecond_node(String, function_name_tup);
+#endif
+	if (schema != NULL)
+	{
+		pfree(strVal(schema));
+		pfree(schema);
+	}
+	pfree(strVal(function));
+	pfree(function);
 }

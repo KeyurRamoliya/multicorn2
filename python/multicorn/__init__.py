@@ -49,6 +49,23 @@ Attributes:
         in the postgresql cluster.
 """
 
+AggCol = namedtuple("AggCol", ["column", "function", "function_schema"])
+
+"""
+An AggCol describes an attribute of a relation produced after a group by operation
+(upper relation). It is either a column of foreign relation present in a `group by`
+clause, or an aggregate over such column.
+
+Attributes:
+    column(str): name of a column of foreign relation present in a `group by` clause 
+        or as an argument of an aggregation function function
+    function(str): name of an aggregate function to calculate over `column`. If
+        column is a part of a `group by` clause, and should not be aggregated, 
+        value is `None`
+    function_schema(str): name of a schema aggregation function is defined in.
+        None for standard functions, like `SUM` or `MAX`
+"""
+
 class Qual(object):
     """A Qual describes a postgresql qualifier.
 
@@ -223,18 +240,26 @@ class ForeignDataWrapper(object):
             more granular details for the planning phase, in the form:
 
             {
-                "groupby_supported": <true_or_false>, # can be ommited if false
-                "agg_functions": ["min", "max", "sum", ...],
-                "supported_operators": [">", "<", "=", ...]
+                "groupby_supported": <true_or_false>, # can be omitted if false
+                "agg_functions": ["min", "max", "sum", ("public", "something_custom"), ...],
+                "operators_supported": [">", "<", "=", ...],
+                "mutable_supported": <true_or_false> # can be omitted if false
             }
 
             Each entry in `agg_functions` list corresponds to the name of a
             aggregation function in PostgreSQL, which the FDW can pushdown.
             If a query has a function not in this list it won't be pushed down.
+            Functions in pg_catalog, such as sum or avg may be represented just
+            by string, while custom aggregates residing in other schemas must
+            be a tuple of schema name and function name.
 
-            The `supported_operators` entry lists all operators that can be used
+            The `operators_supported` entry lists all operators that can be used
             in qual (WHERE) clauses so that the aggregation pushdown will still
             be supported.
+
+            The `mutable_supported` determines whether mutable aggregates will be
+            pushed down. By default, such aggregates are computed locally, to
+            avoid unstable behaviour.
         """
         return None
 
@@ -341,9 +366,11 @@ class ForeignDataWrapper(object):
         Kwargs:
             sortkeys (list): A list of :class:`SortKey`
                 that the FDW said it can enforce.
-            aggs (dict): A dictionary mapping aggregation key with function and
-                column to be used in the aggregation operation. Result should be
-                returned under the provided aggregation key.
+            aggs (dict): A dictionary mapping aggregation key to :class:`AggColumn`.
+                Result should be returned under the provided aggregation
+                key. For columns that are present in a group by clause, function is
+                mapped to None. If present, keys in this dict, should take
+                precedence over :argument:`columns` argument
             group_clauses (list): A list of columns used in GROUP BY statements.
                 For each column provided the returned response should have a
                 corresponding value in each row using that column name as the key.

@@ -120,6 +120,9 @@ static bool multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped
 static void multicorn_add_foreign_grouping_paths(PlannerInfo *root,
 											  RelOptInfo *input_rel,
 											  RelOptInfo *grouped_rel
+#if PG_VERSION_NUM >= 110000
+											  , GroupPathExtraData *extra
+#endif
 );
 
 /*	Helpers functions */
@@ -1409,7 +1412,11 @@ multicornGetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
 	switch (stage)
 	{
 		case UPPERREL_GROUP_AGG:
-			multicorn_add_foreign_grouping_paths(root, input_rel, output_rel);
+			multicorn_add_foreign_grouping_paths(root, input_rel, output_rel
+#if PG_VERSION_NUM >= 110000
+			, (GroupPathExtraData *) extra
+#endif
+			);
 			break;
 		default:
 			elog(ERROR, "unexpected upper relation: %d", (int) stage);
@@ -1426,7 +1433,11 @@ multicornGetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
  */
 static void
 multicorn_add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
-									 RelOptInfo *grouped_rel)
+									 RelOptInfo *grouped_rel
+#if PG_VERSION_NUM >= 110000
+									 , GroupPathExtraData *extra
+#endif
+)
 {
 	Query	   *parse = root->parse;
 	MulticornPlanState *ifpinfo = input_rel->fdw_private;
@@ -1450,6 +1461,15 @@ multicorn_add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	fpinfo->agg_functions = ifpinfo->agg_functions;
 
 	multicorn_merge_fdw_options(fpinfo, ifpinfo, NULL);
+
+
+#if PG_VERSION_NUM >= 110000
+	if (extra->havingQual)
+		return;
+#else
+	if (root->hasHavingQual)
+		return;
+#endif
 
 	/*
 	 * Assess if it is safe to push down aggregation and grouping.

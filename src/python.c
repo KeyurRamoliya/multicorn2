@@ -95,8 +95,14 @@ void appendBinaryStringInfoQuote(StringInfo buffer,
 							Py_ssize_t strlength,
 							bool need_quote);
 
+#if PG_VERSION_NUM < 150000
+Value
+#else
+String
+#endif
+*pythonItemToString(PyObject *item);
 void pythonUnicodeSequenceToList(PyObject *pySequence, List **target);
-
+void pythonProcessAggregateFunctions(PyObject *pySequence, List **target);
 
 static void begin_remote_xact(CacheEntry * entry);
 
@@ -924,7 +930,8 @@ execute(ForeignScanState *node, ExplainState *es)
 			   *p_quals = PyList_New(0),
 			   *p_pathkeys = PyList_New(0),
 			   *p_iterable,
-			   *p_method;
+			   *p_method,
+			   *AggColClass = getClassString("multicorn.AggCol");
 	ListCell   *lc;
 
 	ExprContext *econtext = node->ss.ps.ps_ExprContext;
@@ -993,25 +1000,40 @@ execute(ForeignScanState *node, ExplainState *es)
 		{
 			PyObject *aggs = PyDict_New();
 			ListCell *lc_agg;
-			List *agg_list;
-
 			foreach(lc_agg, state->aggs)
 			{
 				PyObject	*agg,
 							*function,
+							*function_schema,
 							*column;
-
-				agg = PyDict_New();
-
-				agg_list = (List *)lfirst(lc_agg);
-				function = PyUnicode_FromString(strVal(lsecond(agg_list)));
+				List *agg_list = (List *)lfirst(lc_agg);
+				List	   *func_q_name = lsecond_node(List, agg_list);
+				if (func_q_name != NULL)
+				{
+					function = PyUnicode_FromString(strVal(lsecond(func_q_name)));
+					if (linitial(func_q_name) != NULL)
+					{
+						function_schema = PyUnicode_FromString(strVal(linitial(func_q_name)));
+					}
+					else
+					{
+						function_schema = Py_None;
+						Py_INCREF(function_schema);
+					}
+				}
+				else
+				{
+					function = Py_None;
+					function_schema = Py_None;
+					Py_INCREF(function);
+					Py_INCREF(function_schema);
+				}
 				column = PyUnicode_FromString(strVal(lthird(agg_list)));
-
-				PyDict_SetItemString(agg, "function", function);
-				PyDict_SetItemString(agg, "column", column);
+				agg = PyObject_CallFunction(AggColClass, "(O,O,O)", column, function, function_schema);
 				PyDict_SetItemString(aggs, strVal(linitial(agg_list)), agg);
 				Py_DECREF(agg);
 				Py_DECREF(function);
+				Py_DECREF(function_schema);
 				Py_DECREF(column);
 			}
 
@@ -1055,6 +1077,7 @@ execute(ForeignScanState *node, ExplainState *es)
 		Py_DECREF(p_method);
 		Py_DECREF(args);
 		Py_DECREF(kwargs);
+		Py_DECREF(AggColClass);
 	}
 
 	errorCheck();
@@ -1428,16 +1451,35 @@ pyobjectToDatum(PyObject *object, StringInfo buffer,
 	return value;
 }
 
+#if PG_VERSION_NUM < 150000
+Value
+#else
+String
+#endif
+*pythonItemToString(PyObject *item)
+{
+	StringInfoData	str_info;
+	PyObject		*p_string;
+	char			*tempbuffer;
+	Py_ssize_t		strlength = 0;
+
+	initStringInfo(&str_info);
+
+	p_string = PyUnicode_AsEncodedString(item, getPythonEncodingName(), NULL);
+	errorCheck();
+	PyBytes_AsStringAndSize(p_string, &tempbuffer, &strlength);
+	appendBinaryStringInfo(&str_info, tempbuffer, strlength);
+	Py_DECREF(p_string);
+
+	return makeString(str_info.data);
+}
+
 void
 pythonUnicodeSequenceToList(PyObject *pySequence, List **target)
 {
-	PyObject	*p_item,
-				*p_string;
+	PyObject	*p_item;
 	Py_ssize_t	i,
-				size,
-				strlength;
-	char	   *tempbuffer;
-	StringInfo element;
+				size;
 
 	if (pySequence != NULL && pySequence != Py_None)
 	{
@@ -1445,19 +1487,49 @@ pythonUnicodeSequenceToList(PyObject *pySequence, List **target)
 
 		for (i = 0; i < size; i++)
 		{
-			element = makeStringInfo();
-			strlength = 0;
+			p_item = PySequence_GetItem(pySequence, i);
+			*target = lappend(*target, pythonItemToString(p_item));
+			Py_DECREF(p_item);
+		}
+	}
+}
+
+void
+pythonProcessAggregateFunctions(PyObject *pySequence, List **target)
+{
+	PyObject	*p_item,
+				*p_func,
+				*p_schema;
+	Py_ssize_t	i,
+				size,
+				tup_length;
+
+	if (pySequence != NULL && pySequence != Py_None)
+	{
+		size = PySequence_Size(pySequence);
+
+		for (i = 0; i < size; i++)
+		{
 
 			p_item = PySequence_GetItem(pySequence, i);
-			p_string = PyUnicode_AsEncodedString(p_item, getPythonEncodingName(), NULL);
-			errorCheck();
-			PyBytes_AsStringAndSize(p_string, &tempbuffer, &strlength);
-			appendBinaryStringInfo(element, tempbuffer, strlength);
+			if (PyTuple_Check(p_item))
+			{
+				tup_length = PyTuple_Size(p_item);
+				if (tup_length != 2)
+				{
+					elog(ERROR, "Unexpected size of tuple in agg_functions");
+				}
+				p_schema = PyTuple_GetItem(p_item, 0);
+				p_func = PyTuple_GetItem(p_item, 1);
 
-			*target = lappend(*target, makeString(element->data));
+				*target = lappend(*target, list_make2(pythonItemToString(p_schema), pythonItemToString(p_func)));
+			}
+			else
+			{
+				*target = lappend(*target, list_make2(NULL, pythonItemToString(p_item)));
+			}
 
 			Py_DECREF(p_item);
-			Py_DECREF(p_string);
 		}
 	}
 }
@@ -1795,9 +1867,20 @@ canPushdownUpperrel(MulticornPlanState * state)
 			Py_XDECREF(p_object);
 		}
 
+		/* Determine whether the FDW instance supports mutable functions */
+		if (PyMapping_HasKeyString(p_upperrel_pushdown, "mutable_supported"))
+		{
+			p_object = PyMapping_GetItemString(p_upperrel_pushdown, "mutable_supported");
+			if (p_object != NULL && p_object != Py_None)
+			{
+				state->mutable_supported = PyObject_IsTrue(p_object);
+			}
+			Py_XDECREF(p_object);
+		}
+
 		/* Determine which aggregation functions are supported */
 		p_agg_funcs = PyMapping_GetItemString(p_upperrel_pushdown, "agg_functions");
-		pythonUnicodeSequenceToList(p_agg_funcs, &state->agg_functions);
+		pythonProcessAggregateFunctions(p_agg_funcs, &state->agg_functions);
 		Py_XDECREF(p_agg_funcs);
 
 		/* Construct supported qual operators list */

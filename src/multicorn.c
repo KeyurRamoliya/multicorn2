@@ -1169,16 +1169,6 @@ multicorn_merge_fdw_options(MulticornPlanState *fpinfo,
 	Assert(!fpinfo_i ||
 		   fpinfo_i->server->serverid == fpinfo_o->server->serverid);
 
-	/*
-	 * Copy the server specific FDW options.  (For a join, both relations come
-	 * from the same server, so the server options should have the same value
-	 * for both relations.)
-	 */
-	fpinfo->fdw_startup_cost = fpinfo_o->fdw_startup_cost;
-	fpinfo->fdw_tuple_cost = fpinfo_o->fdw_tuple_cost;
-	fpinfo->shippable_extensions = fpinfo_o->shippable_extensions;
-	fpinfo->use_remote_estimate = fpinfo_o->use_remote_estimate;
-	fpinfo->fetch_size = fpinfo_o->fetch_size;
 
 	/* Multicorn specific options, differing from othe FDW implementations */
 	fpinfo->fdw_instance = fpinfo_o->fdw_instance;
@@ -1190,27 +1180,6 @@ multicorn_merge_fdw_options(MulticornPlanState *fpinfo,
 	fpinfo->qual_list = fpinfo_o->qual_list;
 	fpinfo->pathkeys = fpinfo_o->pathkeys;
 
-	/* Merge the table level options from either side of the join. */
-	if (fpinfo_i)
-	{
-		/*
-		 * We'll prefer to use remote estimates for this join if any table
-		 * from either side of the join is using remote estimates.  This is
-		 * most likely going to be preferred since they're already willing to
-		 * pay the price of a round trip to get the remote EXPLAIN.  In any
-		 * case it's not entirely clear how we might otherwise handle this
-		 * best.
-		 */
-		fpinfo->use_remote_estimate = fpinfo_o->use_remote_estimate ||
-			fpinfo_i->use_remote_estimate;
-
-		/*
-		 * Set fetch size to maximum of the joining sides, since we are
-		 * expecting the rows returned by the join to be proportional to the
-		 * relation sizes.
-		 */
-		fpinfo->fetch_size = Max(fpinfo_o->fetch_size, fpinfo_i->fetch_size);
-	}
 }
 
 /*
@@ -1388,26 +1357,6 @@ multicorn_foreign_grouping_ok(PlannerInfo *root, RelOptInfo *grouped_rel)
 	/* Safe to pushdown */
 	fpinfo->pushdown_safe = true;
 
-	/*
-	 * If user is willing to estimate cost for a scan using EXPLAIN, he
-	 * intends to estimate scans on that relation more accurately. Then, it
-	 * makes sense to estimate the cost of the grouping on that relation more
-	 * accurately using EXPLAIN.
-	 */
-	fpinfo->use_remote_estimate = ofpinfo->use_remote_estimate;
-
-	/* Copy startup and tuple cost as is from underneath input rel's fpinfo */
-	fpinfo->fdw_startup_cost = ofpinfo->fdw_startup_cost;
-	fpinfo->fdw_tuple_cost = ofpinfo->fdw_tuple_cost;
-
-	/*
-	 * Set # of retrieved rows and cached relation costs to some negative
-	 * value, so that we can detect when they are set to some sensible values,
-	 * during one (usually the first) of the calls to multicorn_estimate_path_cost_size.
-	 */
-	fpinfo->retrieved_rows = -1;
-	fpinfo->rel_startup_cost = -1;
-	fpinfo->rel_total_cost = -1;
 
 	return true;
 }
@@ -1455,7 +1404,6 @@ multicornGetForeignUpperPaths(PlannerInfo *root, UpperRelationKind stage,
 
 	fpinfo = (MulticornPlanState *) palloc0(sizeof(MulticornPlanState));
 	fpinfo->pushdown_safe = false;
-	fpinfo->stage = stage;
 	output_rel->fdw_private = fpinfo;
 
 	switch (stage)
@@ -1497,14 +1445,6 @@ multicorn_add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 	/* save the input_rel as outerrel in fpinfo */
 	fpinfo->outerrel = input_rel;
 
-	/*
-	 * Copy foreign table, foreign server, user mapping, shippable extensions
-	 * etc. details from the input relation's fpinfo.
-	 */
-	fpinfo->table = ifpinfo->table;
-	fpinfo->server = ifpinfo->server;
-	fpinfo->user = ifpinfo->user;
-
 	/* copy the upperrel pushdown info as well */
 	fpinfo->groupby_supported = ifpinfo->groupby_supported;
 	fpinfo->agg_functions = ifpinfo->agg_functions;
@@ -1522,11 +1462,6 @@ multicorn_add_foreign_grouping_paths(PlannerInfo *root, RelOptInfo *input_rel,
 
 	/* Use small cost to push down aggregate always */
 	rows = width = startup_cost = total_cost = 1;
-	/* Now update this information in the fpinfo */
-	fpinfo->rows = rows;
-	fpinfo->width = width;
-	fpinfo->startup_cost = startup_cost;
-	fpinfo->total_cost = total_cost;
 
 	/* Create and add foreign path to the grouping relation. */
 #if PG_VERSION_NUM < 120000

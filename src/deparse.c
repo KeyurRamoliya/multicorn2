@@ -58,16 +58,8 @@ typedef enum
  */
 typedef struct foreign_glob_cxt
 {
-	PlannerInfo *root;			/* global planner state */
 	RelOptInfo *foreignrel;		/* the foreign relation we are planning for */
 
-	/*
-	 * For join pushdown, only a limited set of operators are allowed to be
-	 * pushed.  This flag helps us identify if we are walking through the list
-	 * of join conditions. Also true for aggregate relations to restrict
-	 * aggregates for specified list.
-	 */
-	bool		is_remote_cond;	/* true for join or aggregate relations */
 	Relids		relids;			/* relids of base relations in the underlying
 								 * scan */
 } foreign_glob_cxt;
@@ -391,7 +383,6 @@ multicorn_is_foreign_expr(PlannerInfo *root,
 	 * Check that the expression consists of nodes that are safe to execute
 	 * remotely.
 	 */
-	glob_cxt.root = root;
 	glob_cxt.foreignrel = baserel;
 
 	/*

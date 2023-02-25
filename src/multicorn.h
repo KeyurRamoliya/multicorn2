@@ -58,21 +58,6 @@ typedef struct ConversionInfo
 	bool		need_quote;
 }	ConversionInfo;
 
-/*
- * Context for multicorn_deparse_expr
- */
-typedef struct deparse_expr_cxt
-{
-	PlannerInfo *root;			/* global planner state */
-	RelOptInfo *foreignrel;		/* the foreign relation we are planning for */
-	RelOptInfo *scanrel;		/* the underlying scan relation. Same as
-								 * foreignrel, when that represents a join or
-								 * a base relation. */
-
-	StringInfo	buf;			/* output buffer to append to */
-	List	  **params_list;	/* exprs that will become remote Params */
-	bool		can_skip_cast;	/* outer function can skip int2/int4/int8/float4/float8 cast */
-} deparse_expr_cxt;
 
 /*
  * FDW-specific planner information kept in RelOptInfo.fdw_private for a
@@ -122,37 +107,8 @@ typedef struct MulticornPlanState
 	/* qual clauses */
 	List	   *baserestrictinfo;
 
-	/* Actual remote restriction clauses for scan (sans RestrictInfos) */
-	List	   *final_remote_exprs;
-
-	/* Estimated size and cost for a scan or join. */
-	double		rows;
-	Cost		startup_cost;
-	Cost		total_cost;
-
-	/* Costs excluding costs for transferring data from the foreign server */
-	double		retrieved_rows;
-	Cost		rel_startup_cost;
-	Cost		rel_total_cost;
-
-	/* Options extracted from catalogs. */
-	bool		use_remote_estimate;
-	Cost		fdw_startup_cost;
-	Cost		fdw_tuple_cost;
-	List	   *shippable_extensions;	/* OIDs of whitelisted extensions */
-
 	/* Join information */
 	RelOptInfo *outerrel;
-
-	/* Upper relation information */
-	UpperRelationKind stage;
-
-	/* Cached catalog information. */
-	ForeignTable *table;
-	ForeignServer *server;
-	UserMapping *user;			/* only set in use_remote_estimate mode */
-
-	int			fetch_size;		/* fetch size for this remote table */
 
 	/* Grouping information */
 	List	   *grouped_tlist;

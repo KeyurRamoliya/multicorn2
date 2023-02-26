@@ -7,6 +7,10 @@ from datetime import datetime
 from operator import itemgetter
 
 
+def repr_dict(dict_to_repr) -> str:
+    return "{" + ", ".join("'%s': %s" % (key, val) for key, val in sorted(dict_to_repr.items())) + "}"
+
+
 class TestForeignDataWrapper(ForeignDataWrapper):
 
     _startup_cost = 10
@@ -19,6 +23,7 @@ class TestForeignDataWrapper(ForeignDataWrapper):
         self.tx_hook = options.get('tx_hook', False)
         self._row_id_column = options.get('row_id_column',
                                           list(self.columns.keys())[0])
+        self.upper_relations_push = options.get('pushdown_upper_rel', False)
         log_to_postgres(str(sorted(options.items())))
         log_to_postgres(str(sorted([(key, column.type_name) for key, column in
                                     columns.items()])))
@@ -30,9 +35,9 @@ class TestForeignDataWrapper(ForeignDataWrapper):
             log_to_postgres("An error is about to occur", WARNING)
             log_to_postgres("An error occured", ERROR)
 
-    def _as_generator(self, quals, columns):
+    def _as_generator(self, quals, columns, aggs=None, rows=20):
         random_thing = cycle([1, 2, 3])
-        for index in range(20):
+        for index in range(rows):
             if self.test_type == 'sequence':
                 line = []
                 for column_name in self.columns:
@@ -43,7 +48,8 @@ class TestForeignDataWrapper(ForeignDataWrapper):
                                                   next(random_thing), index))
             else:
                 line = {}
-                for column_name, column in self.columns.items():
+                col_names = aggs.keys() if aggs is not None else self.columns.keys()
+                for column_name in col_names:
                     if self.test_type == 'list':
                         line[column_name] = [
                             column_name, next(random_thing),
@@ -77,10 +83,14 @@ class TestForeignDataWrapper(ForeignDataWrapper):
                                                           index)
             yield line
 
-    def execute(self, quals, columns, sortkeys=None):
+    def execute(self, quals, columns, sortkeys=None, aggs=None, group_clauses=None):
         sortkeys = sortkeys or []
         log_to_postgres(str(sorted(quals)))
-        log_to_postgres(str(sorted(columns)))
+        if self.upper_relations_push:
+            log_to_postgres("Groups: '%s'" % (sorted(group_clauses) if group_clauses else None))
+            log_to_postgres("Aggregations: '%s'" % (repr_dict(aggs) if aggs else None))
+        else:
+            log_to_postgres(str(sorted(columns)))
         if (len(sortkeys)) > 0:
             log_to_postgres("requested sort(s): ")
             for k in sortkeys:
@@ -102,7 +112,21 @@ class TestForeignDataWrapper(ForeignDataWrapper):
                 else:
                     return sorted(res, key=itemgetter(k.attname),
                                   reverse=k.is_reversed)
-            return self._as_generator(quals, columns)
+            return self._as_generator(
+                quals,
+                columns,
+                aggs=(aggs if self.upper_relations_push else None),
+                rows=(1 if self.upper_relations_push and aggs and group_clauses is None else 20)
+            )
+
+    def can_pushdown_upperrel(self):
+        if not self.upper_relations_push:
+            return super(TestForeignDataWrapper, self).can_pushdown_upperrel()
+        return {
+            "groupby_supported": True,
+            "agg_functions": ["sum", ("public", "push_me_down")],
+            "operators_supported": ["="]
+        }
 
     def get_rel_size(self, quals, columns):
         if self.test_type == 'planner':

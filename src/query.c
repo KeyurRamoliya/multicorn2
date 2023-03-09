@@ -112,15 +112,34 @@ initConversioninfo(ConversionInfo ** cinfos, AttInMetadata *attinmeta, List *upp
 		bool		typIsVarlena;
 
 		char *attrname = NameStr(attr->attname);
+		int attndims = attr->attndims;
 
 		if (upper_rel_targets)
 		{
+			HeapTuple   typeTuple;
+			Oid typid = attr->atttypid;
+			Form_pg_type pt;
 			/*
 			 * For aggregations/groupings the targets lack attname, so we instead
 			 * refer to the targets through references generated in
 			 * multicorn_extract_upper_rel_info().
 			 */
 			attrname = strVal(list_nth(upper_rel_targets, i));
+
+			/**
+			 * For upper relations columns attndims always returns 0, so we are
+			 * referring to full type definition to extract actual dims
+			 */
+			attndims = -1;
+			while (OidIsValid(typid)) {
+				attndims++;
+				typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+				if (!HeapTupleIsValid(typeTuple))
+					elog(ERROR, "cache lookup failed for type %u", typid);
+				pt = (Form_pg_type) GETSTRUCT(typeTuple);
+				typid = pt->typelem;
+				ReleaseSysCache(typeTuple);
+			}
 		}
 
 		if (!attr->attisdropped)
@@ -136,7 +155,7 @@ initConversioninfo(ConversionInfo ** cinfos, AttInMetadata *attinmeta, List *upp
 			cinfo->attinfunc = &attinmeta->attinfuncs[i];
 			cinfo->attrname = attrname;
 			cinfo->attnum = i + 1;
-			cinfo->attndims = attr->attndims;
+			cinfo->attndims = attndims;
 			cinfo->need_quote = false;
 			cinfos[i] = cinfo;
 		}
@@ -380,7 +399,7 @@ extractClauseFromOpExpr(
 		/* Do not add it if it either contains a mutable function, or makes */
 		/* self references in the right hand side. */
 		if (!(contain_volatile_functions((Node *) right) ||
-			  bms_is_subset(base_relids, 
+			  bms_is_subset(base_relids,
 					pull_varnos(
 #if PG_VERSION_NUM >= 140000
 											root,

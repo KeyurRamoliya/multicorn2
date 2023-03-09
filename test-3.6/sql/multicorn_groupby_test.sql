@@ -45,6 +45,20 @@ select test1, push_me_down(test2) from testmulticorn WHERE test2 > 'test2 2 9' G
 -- having clause
 select test1, push_me_down(test2) from testmulticorn GROUP BY test1 HAVING push_me_down(test2) = '#synth_column.0 2 0';
 
+DROP FOREIGN TABLE testmulticorn;
+
+-- testing python sequence conversion
+CREATE foreign table testmulticorn (
+  test1 character varying[]
+) server multicorn_srv options (
+  test_type 'list',
+  pushdown_upper_rel 'true'
+);
+-- direct query
+SELECT test1 FROM testmulticorn;
+-- group by query
+SELECT test1 FROM testmulticorn GROUP BY test1;
+
 DROP EXTENSION multicorn cascade;
 DROP AGGREGATE public.push_me_down(arg character varying);
 DROP FUNCTION costly_business(arg character varying, other_arg character varying);
